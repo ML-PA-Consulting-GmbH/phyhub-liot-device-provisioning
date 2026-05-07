@@ -48,7 +48,13 @@ if [[ -z "${VERSION}" ]]; then
 fi
 
 ARCH="${ARCH:-arm64}"
-BIN="phyhub-liot-device-provisioning"
+# Source package lives under its full module-style name so it is unambiguous in
+# the repo, but the binary itself MUST be named "liot-provisioning": snapd gates
+# the await-liot-registration-data task on the existence of /usr/bin/liot-provisioning,
+# so any other name silently breaks the upstream registration. See main.go's
+# expectedInstallPath comment and the README "Install the binary" section.
+PKG_DIR="phyhub-liot-device-provisioning"
+BIN="liot-provisioning"
 OUTPUT="bin/${BIN}-${VERSION}-linux-${ARCH}"
 
 mkdir -p bin
@@ -56,6 +62,6 @@ mkdir -p bin
 GOOS=linux GOARCH="${ARCH}" go build \
   -ldflags="-s -w -X main.version=${VERSION}" \
   -o "${OUTPUT}" \
-  "./cmd/${BIN}"
+  "./cmd/${PKG_DIR}"
 
 echo "Built: ${OUTPUT}"

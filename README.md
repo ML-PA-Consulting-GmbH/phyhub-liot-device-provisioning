@@ -28,7 +28,7 @@ The version is read from the [`VERSION`](VERSION) file by default and embedded i
 ./build.sh --override-version 1.2.0 amd64
 ```
 
-Output goes to `bin/phyhub-liot-device-provisioning-<version>-linux-<arch>`.
+Output goes to `bin/liot-provisioning-<version>-linux-<arch>`.
 
 **Requirements:** Go 1.25+ (see [`go.mod`](go.mod))
 
@@ -39,13 +39,15 @@ The intended deployment is a single static binary plus one of the provided syste
 
 ### 1. Install the binary
 
-The binary is expected at:
+The binary **must** be installed at exactly:
 
 ```
-/usr/bin/phyhub-liot-device-provisioning
+/usr/bin/liot-provisioning
 ```
 
-This matches the `ExecStart=` path in the shipped service files.
+The name and path are not arbitrary: snapd uses the existence of this exact file as the signal that the image ships an external L-IoT provisioning tool. If the file is missing (or installed under a different name or directory), snapd skips the `await-liot-registration-data` task in its registration change and runs `request-serial` immediately with its own minimal default payload.
+
+This also matches the `ExecStart=` path in the shipped service files.
 
 ### 2. Install a service file
 
@@ -73,7 +75,7 @@ and must be enabled so they auto-start on boot. The shipped units have `WantedBy
 
 The shipped units can be used as-is or as templates:
 
-- `ExecStart=/usr/bin/phyhub-liot-device-provisioning <flow>`; change if you install the binary elsewhere.
+- `ExecStart=/usr/bin/liot-provisioning <flow>`; the binary path is fixed (snapd gate, see above). The unit name is not.
 - `Conflicts=getty.target` and the `ExecStartPre` getty-stop block take exclusive control of the console while running, then `ExecStopPost` re-starts `getty.target` so login prompts return after registration. This is board-agnostic (works on `ttymxc0`, `ttyS0`, `ttyAMA0`, …) but assumes a serial-console boot setup.
 - `After=network-online.target snapd.service`; registration cannot proceed without snapd, and the Appstore requires network. Both must be reachable before the unit starts.
 - `Restart=no`; the unit is one-shot. The binary itself terminates with exit 0 on subsequent boots once a serial assertion is present. 
@@ -83,10 +85,8 @@ The shipped units can be used as-is or as templates:
 The first positional argument selects the flow.
 
 ```bash
-sudo phyhub-liot-device-provisioning claiming-token   # claim token + poll Appstore + submit
-sudo phyhub-liot-device-provisioning basic            # collect + submit, no token
-phyhub-liot-device-provisioning help
-phyhub-liot-device-provisioning --version
+liot-provisioning claiming-token   # claim token + poll Appstore + submit
+liot-provisioning basic            # collect + submit, no token
 ```
 
 Both flows talk to snapd over `/run/snapd.socket`, the binary must run as root. The shipped service units run as `User=root`.
@@ -177,7 +177,7 @@ Snapd accepts a partial v1 body and injects the snapd-owned fields (`format_vers
   "claim":        { "token": "..." },
   "hardware":     { "machine_id": "...", "platform": { ... }, "tpm": { ... }, "secure_boot": { ... }, "network_interfaces": [ ... ] },
   "software":     null,
-  "collector":    { "name": "phyhub-liot-device-provisioning", "version": "1.2.0", "binary_sha256": "..." },
+  "collector":    { "name": "liot-provisioning", "version": "1.2.0", "binary_sha256": "..." },
   "collected_at": "2026-04-26T10:00:00Z"
 }
 ```

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -31,6 +32,14 @@ func init() {
 var version = "dev"
 
 const collectorName = "liot-provisioning"
+
+// expectedInstallPath is the path snapd checks (via osutil.FileExists) to
+// decide whether to schedule the await-liot-registration-data task in its
+// become-operational change. If the binary lives anywhere else, snapd will
+// not wait for our POST and will register with its own default payload —
+// the upstream request then arrives without claim/hardware and is rejected.
+// See snapd: overlord/devicestate/handlers_liot.go (liotProvisioningToolPath).
+const expectedInstallPath = "/usr/bin/liot-provisioning"
 
 // alreadyRegisteredTimeout is how long we wait for snapd to answer the
 // "are we registered?" probe before giving up and proceeding with the flow.
@@ -55,6 +64,7 @@ func main() {
 		if alreadyRegistered() {
 			os.Exit(0)
 		}
+		warnIfWrongInstallPath()
 		printStartBanner(flow)
 		if flow == "claiming-token" {
 			runClaimingToken(args)
@@ -70,6 +80,35 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+// warnIfWrongInstallPath prints a prominent warning if the running binary is
+// not at expectedInstallPath. Snapd gates the await-liot-registration-data
+// task on the existence of that exact file; running from anywhere else (e.g.
+// /usr/local/bin, a build tree, a renamed copy) means snapd will register
+// with its own default payload before we POST and the upstream request will
+// be rejected. We warn but do not exit: developers regularly run this binary
+// out-of-tree, and a hard refusal would be more annoying than helpful.
+func warnIfWrongInstallPath() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		resolved = exe
+	}
+	if resolved == expectedInstallPath {
+		return
+	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "WARNING: this binary is running from "+resolved)
+	fmt.Fprintln(os.Stderr, "         but snapd only waits for our registration payload when the")
+	fmt.Fprintln(os.Stderr, "         binary is installed at "+expectedInstallPath+".")
+	fmt.Fprintln(os.Stderr, "         On a real device, install it under that exact path or snapd")
+	fmt.Fprintln(os.Stderr, "         will register with its own default payload before our POST")
+	fmt.Fprintln(os.Stderr, "         lands and the Appstore will reject the request.")
+	fmt.Fprintln(os.Stderr)
 }
 
 // alreadyRegistered queries snapd for a serial assertion: the universal
