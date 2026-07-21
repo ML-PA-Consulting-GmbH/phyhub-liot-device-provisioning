@@ -131,6 +131,94 @@ func TestIsSeeded(t *testing.T) {
 	}
 }
 
+func TestFormatWarningLine_Plain(t *testing.T) {
+	s := Snapshot{Time: ts("10:00:00")}
+	got := formatWarningLine(s, api.Warning{Message: "unable to contact snap store"})
+	if !strings.Contains(got, "Snapd warning:") {
+		t.Errorf("expected plain 'Snapd warning:' prefix in %q", got)
+	}
+	if strings.Contains(got, "CRITICAL") {
+		t.Errorf("plain warning should not be marked CRITICAL: %q", got)
+	}
+	if !strings.Contains(got, "unable to contact snap store") {
+		t.Errorf("message missing from line: %q", got)
+	}
+}
+
+func TestWarningIsCritical_MatchesConfiguredPhrases(t *testing.T) {
+	// Temporarily install a phrase to prove the hook works; the shipped
+	// list is empty on purpose.
+	defer func(orig []string) { criticalWarningPhrases = orig }(criticalWarningPhrases)
+	criticalWarningPhrases = []string{"is blocked"}
+
+	if !warningIsCritical(`cannot install "foo": snap IS BLOCKED`) {
+		t.Error("expected case-insensitive match on configured phrase")
+	}
+	if warningIsCritical("some unrelated warning") {
+		t.Error("did not expect a match for an unconfigured message")
+	}
+
+	s := Snapshot{Time: ts("10:00:00")}
+	line := formatWarningLine(s, api.Warning{Message: "snap is blocked"})
+	if !strings.Contains(line, "[CRITICAL]") {
+		t.Errorf("critical warning should carry the [CRITICAL] marker: %q", line)
+	}
+}
+
+func TestWarningIsCritical_EmptyListMatchesNothing(t *testing.T) {
+	if len(criticalWarningPhrases) != 0 {
+		t.Fatalf("shipped criticalWarningPhrases should be empty, has %d", len(criticalWarningPhrases))
+	}
+	if warningIsCritical("cannot install anything: is blocked") {
+		t.Error("empty phrase list must never classify a warning as critical")
+	}
+}
+
+func TestReportNewWarnings_EmitsEachWarningOnce(t *testing.T) {
+	var buf strings.Builder
+	o := &Observer{out: &buf}
+
+	w1 := api.Warning{Message: "first problem", FirstAdded: ts("10:00:00")}
+	w2 := api.Warning{Message: "second problem", FirstAdded: ts("10:00:01")}
+
+	// Tick 1: both warnings present -> both announced.
+	o.reportNewWarnings(Snapshot{Time: ts("10:00:05"), SnapdReachable: true, Warnings: []api.Warning{w1, w2}})
+	// Tick 2: same warnings still present -> nothing new.
+	o.reportNewWarnings(Snapshot{Time: ts("10:00:10"), SnapdReachable: true, Warnings: []api.Warning{w1, w2}})
+	// Tick 3: a genuinely new warning appears -> only it is announced.
+	w3 := api.Warning{Message: "third problem", FirstAdded: ts("10:00:11")}
+	o.reportNewWarnings(Snapshot{Time: ts("10:00:15"), SnapdReachable: true, Warnings: []api.Warning{w1, w2, w3}})
+
+	out := buf.String()
+	if n := strings.Count(out, "first problem"); n != 1 {
+		t.Errorf("first warning should appear exactly once, got %d:\n%s", n, out)
+	}
+	if n := strings.Count(out, "second problem"); n != 1 {
+		t.Errorf("second warning should appear exactly once, got %d:\n%s", n, out)
+	}
+	if n := strings.Count(out, "third problem"); n != 1 {
+		t.Errorf("third warning should appear exactly once, got %d:\n%s", n, out)
+	}
+}
+
+func TestReportNewWarnings_ReRaisedWarningIsAnnouncedAgain(t *testing.T) {
+	var buf strings.Builder
+	o := &Observer{out: &buf}
+
+	// Same message, but a later first-added (snapd re-raised it after the
+	// prior instance expired) must be treated as new.
+	o.reportNewWarnings(Snapshot{Time: ts("10:00:05"), Warnings: []api.Warning{
+		{Message: "store unreachable", FirstAdded: ts("10:00:00")},
+	}})
+	o.reportNewWarnings(Snapshot{Time: ts("10:30:05"), Warnings: []api.Warning{
+		{Message: "store unreachable", FirstAdded: ts("10:30:00")},
+	}})
+
+	if n := strings.Count(buf.String(), "store unreachable"); n != 2 {
+		t.Errorf("re-raised warning should be announced again, got %d:\n%s", n, buf.String())
+	}
+}
+
 // TestEscalationDoesNotFireAcrossRunUntilGap regression-tests the case where
 // a flow does RunUntil(Seeded), pauses for longer than EscalateAfter (e.g.
 // during a long claim poll), then calls Run() to observe registration. The

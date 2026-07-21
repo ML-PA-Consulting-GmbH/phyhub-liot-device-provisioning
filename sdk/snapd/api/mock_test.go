@@ -402,6 +402,52 @@ func TestGetChange_ParsesTasks(t *testing.T) {
 	}
 }
 
+// ---- Warnings ------------------------------------------------------------
+
+func TestGetWarnings_ParsesList(t *testing.T) {
+	m := newMockSnapd(t)
+	m.handle("GET", pathWarnings, func(w http.ResponseWriter, r *http.Request) {
+		writeSync(t, w, http.StatusOK, []map[string]any{
+			{
+				"message":      `cannot install "foo": snap is blocked`,
+				"first-added":  "2026-07-17T10:00:00Z",
+				"last-added":   "2026-07-17T10:05:00Z",
+				"expire-after": "672h0m0s",
+			},
+		})
+	})
+
+	warnings, err := m.client().GetWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d", len(warnings))
+	}
+	if !strings.Contains(warnings[0].Message, "snap is blocked") {
+		t.Errorf("message not parsed: %q", warnings[0].Message)
+	}
+	if warnings[0].FirstAdded.IsZero() || warnings[0].LastAdded.IsZero() {
+		t.Errorf("timestamps not parsed: %+v", warnings[0])
+	}
+}
+
+func TestGetWarnings_NullResultIsEmpty(t *testing.T) {
+	// snapd returns `null` (not `[]`) when there are no warnings.
+	m := newMockSnapd(t)
+	m.handle("GET", pathWarnings, func(w http.ResponseWriter, r *http.Request) {
+		writeSync(t, w, http.StatusOK, nil)
+	})
+
+	warnings, err := m.client().GetWarnings(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings, got %d", len(warnings))
+	}
+}
+
 func TestGetChanges_ContextCancel(t *testing.T) {
 	// Verify context propagation: a cancelled context stops the request
 	// before the handler returns.

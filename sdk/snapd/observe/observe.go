@@ -58,6 +58,10 @@ type Snapshot struct {
 	// serial has been issued yet. Its presence is the authoritative
 	// "device is registered" signal.
 	Serial *api.SerialAssertion
+
+	// Warnings holds snapd's currently-active warnings at this tick.
+	// Meaningful only when SnapdReachable is true; empty otherwise.
+	Warnings []api.Warning
 }
 
 // IsRegistered reports whether the snapshot shows a serial assertion,
@@ -101,6 +105,11 @@ type Observer struct {
 	stateSig   string
 	stateSince time.Time
 	escalated  bool
+
+	// seenWarnings dedupes proactively-emitted warnings across ticks (and
+	// across successive RunUntil calls on the same Observer) so a standing
+	// warning is announced once, not on every poll. Keyed by warningKey.
+	seenWarnings map[string]bool
 }
 
 // Option configures an Observer. Options are applied left-to-right;
@@ -217,6 +226,11 @@ func (o *Observer) RunUntil(ctx context.Context, stop StopCondition) (Snapshot, 
 			}
 		}
 
+		// Announce any newly-appeared warnings regardless of the state
+		// machinery above: they are their own signal, orthogonal to the
+		// reachable/seeded/registered progression.
+		o.reportNewWarnings(cur)
+
 		firstTickThisCall = false
 		o.last = cur
 		return cur
@@ -279,6 +293,13 @@ func (o *Observer) snapshot(ctx context.Context) Snapshot {
 		// warning. This stays out of the "transition" path so it
 		// doesn't spam.
 		fmt.Fprintln(o.out, stamp(s)+" warning: serial endpoint: "+truncate(serr.Error(), 200))
+	}
+
+	// Snap warnings always indicate a problem worth surfacing; collect
+	// them so the tick loop can announce newly-appeared ones. Best-effort:
+	// a fetch error just means no warnings are reported this tick.
+	if warnings, werr := o.api.GetWarnings(ctx); werr == nil {
+		s.Warnings = warnings
 	}
 
 	return s
@@ -504,6 +525,66 @@ func (o *Observer) fetchRecentFailedChanges(ctx context.Context, limit int) []st
 		}
 	}
 	return out
+}
+
+// criticalWarningPhrases lists lowercase substrings that mark a snap warning
+// as critical rather than merely noteworthy. snapd does not classify warnings
+// by severity, so we pattern-match the message text. The list is intentionally
+// empty for now: every warning is surfaced regardless, and this is the single
+// place to add phrases (e.g. "cannot install", "is blocked") once we know
+// which reliably indicate a wedged, non-recoverable install.
+var criticalWarningPhrases = []string{}
+
+// warningIsCritical reports whether a warning message matches any known
+// critical phrase. Case-insensitive substring match. Returns false while
+// criticalWarningPhrases is empty, so today all warnings render the same.
+func warningIsCritical(message string) bool {
+	lower := strings.ToLower(message)
+	for _, phrase := range criticalWarningPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// warningKey identifies a warning for dedup purposes. snapd keys warnings by
+// message (re-raising the same text bumps last-added rather than adding a
+// row), but a warning that expires and is later raised again gets a fresh
+// first-added; including it means such a re-raise is announced again.
+func warningKey(w api.Warning) string {
+	return w.Message + "\x00" + w.FirstAdded.Format(time.RFC3339Nano)
+}
+
+// formatWarningLine renders a single warning as one console line. Critical
+// warnings get a distinct, greppable marker so an operator (and log scraping)
+// can pick them out.
+func formatWarningLine(s Snapshot, w api.Warning) string {
+	label := "Snapd warning"
+	if warningIsCritical(w.Message) {
+		label = "Snapd warning [CRITICAL]"
+	}
+	return stamp(s) + " " + label + ": " + truncate(w.Message, 200)
+}
+
+// reportNewWarnings emits a line for every warning in the snapshot not seen
+// before on this Observer. snap warnings always signal a problem worth the
+// operator's attention (a blocked or failed install, store-contact failure,
+// assertion trouble), so unlike the stuck-state escalation these are surfaced
+// as soon as they appear rather than after a grace period. Dedup keeps a
+// standing warning from reprinting on every poll.
+func (o *Observer) reportNewWarnings(s Snapshot) {
+	for _, w := range s.Warnings {
+		key := warningKey(w)
+		if o.seenWarnings[key] {
+			continue
+		}
+		if o.seenWarnings == nil {
+			o.seenWarnings = map[string]bool{}
+		}
+		o.seenWarnings[key] = true
+		o.emit([]string{formatWarningLine(s, w)})
+	}
 }
 
 // stateSignature returns a stable string capturing what the observer

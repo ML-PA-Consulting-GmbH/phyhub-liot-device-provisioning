@@ -161,6 +161,27 @@ If snapd gets stuck, the observer escalates after a grace period and dumps the r
     Doing    Request device serial
 ```
 
+**Snap warnings** are surfaced as soon as they appear, not only on escalation:
+a snap warning always signals a problem (a blocked or failed install, a
+store-contact failure, an assertion issue), and a blocked install frequently
+leaves the seeding change sitting in `Doing` forever, so the warning is often
+the only clue that the device will never finish on its own. Each warning is
+printed once (deduplicated across polls):
+
+```
+[10:00:12] Snapd warning: cannot install "some-snap": snap is blocked
+```
+
+Warnings that match a known-critical keyphrase are tagged so operators (and log
+scraping) can single them out:
+
+```
+[10:00:12] Snapd warning [CRITICAL]: cannot install "some-snap": snap is blocked
+```
+
+(The critical-phrase list is currently empty and will be populated as we learn
+which messages reliably indicate an unrecoverable install.)
+
 Reachability transitions are also surfaced:
 
 ```

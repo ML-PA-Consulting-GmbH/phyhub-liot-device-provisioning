@@ -37,6 +37,7 @@ const (
 	pathSerial           = "/v2/model/serial"
 	pathDebugSeeding     = "/v2/debug?aspect=seeding"
 	pathChanges          = "/v2/changes"
+	pathWarnings         = "/v2/warnings"
 	pathAppstoreURL      = "/v2/liot/appstore-url"
 	pathRegistrationData = "/v2/liot/provisioning/registration-data"
 )
@@ -518,6 +519,55 @@ func (c *Client) GetChange(ctx context.Context, id string) (*Change, error) {
 		return nil, fmt.Errorf("snapd: decode change: %w", err)
 	}
 	return &change, nil
+}
+
+// Warning is the subset of a snapd warning (`/v2/warnings`) that the
+// provisioning flows surface as diagnostics. snapd raises warnings when
+// something needs operator attention but isn't a hard task failure, e.g. a
+// snap that cannot be installed or refreshed because it is held, blocked, or
+// its assertions don't validate. During first-boot seeding such a warning is
+// often the only visible symptom that an install is stuck and will never
+// finish on its own.
+//
+// Only the fields we render are modelled; snapd also returns last-shown,
+// expire-after and repeat-after, which are not useful on the console.
+type Warning struct {
+	Message    string    `json:"message"`
+	FirstAdded time.Time `json:"first-added"`
+	LastAdded  time.Time `json:"last-added"`
+}
+
+// GetWarnings returns snapd's currently-active (pending) warnings, the same
+// set surfaced by `snap warnings`. Expired warnings are not included; snapd's
+// default selector for this endpoint is "pending".
+//
+// Best-effort diagnostic surface: callers treat any error as "no warnings to
+// show" rather than a fatal condition.
+func (c *Client) GetWarnings(ctx context.Context) ([]Warning, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+pathWarnings, nil)
+	if err != nil {
+		return nil, fmt.Errorf("snapd: build request: %w", err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("snapd: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var env snapdEnvelope
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		return nil, fmt.Errorf("snapd: decode response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK || env.Type != "sync" {
+		return nil, fmt.Errorf("snapd: unexpected response type=%s status=%d", env.Type, resp.StatusCode)
+	}
+	// snapd returns `null` (not `[]`) when there are no warnings; unmarshal
+	// handles that as a nil slice, which the caller treats as "none".
+	var warnings []Warning
+	if err := json.Unmarshal(env.Result, &warnings); err != nil {
+		return nil, fmt.Errorf("snapd: decode warnings: %w", err)
+	}
+	return warnings, nil
 }
 
 func unixSocketHTTPClient(socketPath string, timeout time.Duration) *http.Client {
