@@ -1,0 +1,32 @@
+# .gitleaksignore
+#
+# Reviewed findings suppressed from future gitleaks runs.
+# Each entry is an individual fingerprint with a stated reason; nothing is
+# suppressed by a blanket path rule.
+#
+# Reviewed by : Morten Rousseau
+# Reviewed on : 2026-09-22 10:45:40 UTC
+# Report      : gitleaks.json
+# Suppressed  : 5 of 5 finding(s)
+#
+
+# --------------------------------------------------------------------------
+# snap-assertion-signing-key-digest  [1 finding(s)]
+#
+# SHA3-384 digest of a PUBLIC snap assertion signing key.
+# Part of the assertion header format, shipped on every device and required to verify assertions.
+# Not a credential.
+# --------------------------------------------------------------------------
+6b5596c2062d84a70dcf8c4f3e1f3146975082b0:sdk/snapd/api/api_test.go:generic-api-key:15
+
+# --------------------------------------------------------------------------
+# snap-assertion-test-fixture  [4 finding(s)]
+#
+# Field from a known snap assertion header (device-key / sign-key digest), inside a Go _test.go file, with a value too short to be a real SHA3-384 digest (64 base64url characters).
+# Confirmed by inspection to be synthetic, truncated example data used to test a text parser, not a real device or signing key - the surrounding fixture uses the well-known Canonical "generic"/"generic-classic" test brand.
+# Not a credential.
+# --------------------------------------------------------------------------
+6b5596c2062d84a70dcf8c4f3e1f3146975082b0:sdk/snapd/api/api_test.go:generic-api-key:10
+6b5596c2062d84a70dcf8c4f3e1f3146975082b0:sdk/snapd/api/api_test.go:generic-api-key:13
+6b5596c2062d84a70dcf8c4f3e1f3146975082b0:sdk/snapd/api/api_test.go:generic-api-key:33
+6b5596c2062d84a70dcf8c4f3e1f3146975082b0:sdk/snapd/api/api_test.go:generic-api-key:35
